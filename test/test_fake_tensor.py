@@ -6,6 +6,7 @@ import itertools
 from torch.testing._internal.jit_utils RUN_CUDA
 from torch._subclasses import FakeTensor
 
+from torch._subclasses.fake_tensor import FakeTensor
 
 class FakeTensorTest(TestCase):
     def test_basic(self):
@@ -37,6 +38,10 @@ class FakeTensorTest(TestCase):
         y = FakeTensor.from_tensor(torch.rand([4, 4], device="cuda"))
         z = FakeTensor.from_tensor(torch.rand([4, 4], device="cpu"))
         self.assertRaises(Exception, lambda: torch.lerp(x, y, z))
+
+    def test_dispatch_device(self):
+        x = FakeTensor.from_tensor(torch.rand([4, 4]))
+        self.assertEqual(x.device.type, "cpu")
 
 
 def contains_type(type: torch._C.Type, maybe_contained_type: torch._C.Type):

@@ -30,7 +30,7 @@ class FakeTensor(BaseTensor):
 
     @staticmethod
     def __new__(cls, elem, device):
-        return super().__new__(cls, elem)
+        return super().__new__(cls, elem, dispatch_device=True)
 
     def __init__(self, elem, device: Union[torch.device, str]):
         # elem does not need to be recorded, because FakeTensor *is a* elem
@@ -44,16 +44,22 @@ class FakeTensor(BaseTensor):
         existing_device = t.device
         return FakeTensor(t.to(device="meta"), existing_device)
 
-    @property
-    def device(self):
-        return self.fake_device
+    # TODO: resolve error in default __repr__
+    def __repr__(self):
+        return f"FakeTensor({self.fake_device})"
 
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         kwargs = kwargs if kwargs else {}
 
+        # This classes virtualizes .device() calls, need to short-circuit
+        # it insteead of calling device again or we would keep on recurring
+        if func == torch.ops.prim.device.default:
+            assert len(args) == 1 and isinstance(args[0], FakeTensor)
+            return args[0].fake_device
 
         # Run the original computation
+
         r = super().__torch_dispatch__(func, types, args, kwargs)
 
         def wrap(e, device):
