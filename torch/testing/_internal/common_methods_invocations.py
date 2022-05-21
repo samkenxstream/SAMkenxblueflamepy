@@ -18872,6 +18872,11 @@ python_ref_db = [
             }), 'TestCommon', 'test_python_reference_consistency', device_type='cpu'),
         ),
     ),
+    PythonRefInfo(
+        "_refs.nn.functional.leaky_relu",
+        torch_opinfo_name="nn.functional.leaky_relu",
+        decorators=(),
+    ),
     ElementwiseUnaryPythonRefInfo(
         "_refs.nn.functional.mish",
         torch_opinfo_name="nn.functional.mish",
