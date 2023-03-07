@@ -122,7 +122,7 @@ def set_meta(proxy, val):
         proxy.node.meta['tensor_meta'] = _extract_tensor_metadata(val)
     elif isinstance(val, py_sym_types):
         proxy.node.meta['val'] = val
-    elif isinstance(val, list) or isinstance(val, tuple):
+    elif isinstance(val, (list, tuple)):
         if all(isinstance(x, FakeTensor) for x in val):
             proxy.node.meta['val'] = [snapshot_fake(x) for x in val]
     elif isinstance(val, torch.Tensor):
@@ -191,7 +191,7 @@ def track_tensor_tree(inner_res, proxy_res, *, constant, tracer):
     # Unfortunately, tree_map cannot directly be used here. As the resulting
     # object may be a proxy that represents a tuple, we may need to
     # explicitly unwrap the proxy by simulating the flattening operations.
-    if isinstance(inner_res, tuple) or isinstance(inner_res, list):
+    if isinstance(inner_res, (tuple, list)):
         if isinstance(proxy_res, fx.Proxy):
             set_meta(proxy_res, inner_res)
         for idx, e in enumerate(inner_res):
@@ -561,11 +561,16 @@ class ProxySymDispatchMode(SymDispatchMode):
         # We also assume there are no keyword arguments.
         assert not kwargs
         out = func(*args, **kwargs)
-        assert isinstance(out, py_sym_types), f"{func}(*{args}, **{kwargs}) = {out}"
 
-        # Delays tracing out the proxies on this op until we actually need it
-        p_out_thunk = thunkify(self._compute_proxy, func=func, args=args, out=out)
-        set_proxy_slot(out.node, self.tracer, p_out_thunk)
+        # If func returned a constant, we don't need to trace; we have
+        # determined that the result is constant (no matter if the inputs
+        # were symbolic) and it is no longer necessary to trace the
+        # computation.  This could occur if func triggered some guards.
+        if isinstance(out, py_sym_types):
+            # Delays tracing out the proxies on this op until we actually need it
+            p_out_thunk = thunkify(self._compute_proxy, func=func, args=args, out=out)
+            set_proxy_slot(out.node, self.tracer, p_out_thunk)
+
         return out
 
 

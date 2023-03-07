@@ -185,7 +185,7 @@ class CompileCounterWithBackend:
         self.backend = backend
 
     def __call__(self, gm: torch.fx.GraphModule, example_inputs):
-        from torch._dynamo.eval_frame import lookup_backend
+        from .backends.registry import lookup_backend
 
         self.frame_count += 1
         for node in gm.graph.nodes:
@@ -282,6 +282,7 @@ def make_test_cls_with_patches(cls, cls_prefix, fn_suffix, *patches):
         pass
 
     DummyTestClass.__name__ = f"{cls_prefix}{cls.__name__}"
+    DummyTestClass.__qualname__ = DummyTestClass.__name__
 
     for name in dir(cls):
         if name.startswith("test_"):
