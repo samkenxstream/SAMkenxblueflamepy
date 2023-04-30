@@ -1,11 +1,20 @@
 import os
 import textwrap
+from enum import auto, Enum
 from traceback import extract_stack, format_exc, format_list, FrameSummary
 from typing import cast, List
 
 from . import config
+from .config import is_fbcode
 
 from .utils import counters, format_bytecode
+
+if is_fbcode():
+    from torch.fb.exportdb.logging import exportdb_error_message
+else:
+
+    def exportdb_error_message(ref_case_id):
+        return ""
 
 
 class TorchDynamoException(RuntimeError):
@@ -26,6 +35,13 @@ class SkipFrame(TorchDynamoException):
 
 class TorchRuntimeError(TorchDynamoException):
     pass
+
+
+class InvalidBackend(TorchDynamoException):
+    def __init__(self, name):
+        super().__init__(
+            f"Invalid backend: {name!r}, see `torch._dynamo.list_backends()` for available backends."
+        )
 
 
 class ResetRequired(TorchDynamoException):
@@ -64,6 +80,52 @@ class Unsupported(TorchDynamoException):
     def add_to_stats(self, category="unimplemented"):
         self.category = category
         counters[category][self.msg] += 1
+
+
+class RecompileError(TorchDynamoException):
+    pass
+
+
+class ArgsMismatchError(Unsupported):
+    def __init__(self, msg):
+        super().__init__(msg)
+
+
+class CondOpArgsMismatchError(ArgsMismatchError):
+    """
+    Internal error from cond() due to arguments mismatch.
+    """
+
+    def __init__(self, msg):
+        super().__init__(msg)
+
+
+class UserErrorType(Enum):
+    DYNAMIC_CONTROL_FLOW = auto()
+    ANTI_PATTERN = auto()
+    STANDARD_LIBRARY = auto()
+    CONSTRAIN_VIOLATION = auto()
+
+
+class UserError(Unsupported):
+    def __init__(self, error_type: UserErrorType, msg, ref_case_id=None):
+        """
+        Type of errors that would be valid in Eager, but not supported in TorchDynamo.
+        The error message should tell user about next actions.
+
+        error_type: Type of user error
+        msg: Actionable error message
+        """
+        if ref_case_id is not None:
+            assert isinstance(ref_case_id, int)
+            msg += exportdb_error_message(ref_case_id)
+        super().__init__(msg)
+        self.error_type = error_type
+        self.message = msg
+
+
+class IncorrectUsage(Exception):
+    pass
 
 
 def unimplemented(msg: str):
@@ -109,19 +171,27 @@ def augment_exc_message(exc, msg="\n"):
     if hasattr(exc, "inner_exception") and hasattr(
         exc.inner_exception, "minifier_path"
     ):
-        msg += (
-            f"\nMinifier script written to {exc.inner_exception.minifier_path}. Run "
-            "this script to find the smallest traced graph which reproduces this error.\n"
-        )
+        if hasattr(exc.inner_exception, "buck_command"):
+            msg += (
+                f"\nMinifier script written to {exc.inner_exception.minifier_path}. Run "
+                f"this buck command to find the smallest traced graph "
+                f"which reproduces this error: {exc.inner_exception.buck_command}\n"
+            )
+        else:
+            msg += (
+                f"\nMinifier script written to {exc.inner_exception.minifier_path}. Run "
+                "this script to find the smallest traced graph which reproduces this error.\n"
+            )
 
     if not config.suppress_errors:
         msg += (
             "\n\n"
             "You can suppress this exception and fall back to eager by setting:\n"
+            "    import torch._dynamo\n"
             "    torch._dynamo.config.suppress_errors = True\n"
         )
 
-    old_msg = "" if len(exc.args) == 0 else exc.args[0]
+    old_msg = "" if len(exc.args) == 0 else str(exc.args[0])
 
     if isinstance(exc, KeyError):
         exc.args = (KeyErrorMsg(old_msg + msg),) + exc.args[1:]
@@ -149,12 +219,17 @@ def filter_stack(stack):
 
 
 def format_error_msg(exc, code, record_filename=None, frame=None):
-
     msg = os.linesep * 2
 
     if config.verbose:
-        msg = format_bytecode(
-            "WON'T CONVERT", code.co_name, code.co_filename, code.co_firstlineno, code
+        msg = str(
+            format_bytecode(
+                "WON'T CONVERT",
+                code.co_name,
+                code.co_filename,
+                code.co_firstlineno,
+                code,
+            )
         )
         msg += "=" * 10 + " TorchDynamo Stack Trace " + "=" * 10 + "\n"
         msg += format_exc()
